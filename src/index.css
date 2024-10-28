@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+.react-flow__node {
+  cursor: grab;
+}
+
+.react-flow__node.dragging {
+  cursor: grabbing;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__edge-text {
+  font-size: 12px;
+}
+
+.react-flow__controls {
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+.react-flow__controls button {
+  border-radius: 4px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+}
+
+.react-flow__controls button:hover {
+  background: #f8fafc;
+}
