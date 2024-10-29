@@ -1,16 +1,20 @@
-import React, { useMemo } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import ReactFlow, {
   Background,
   Controls,
   Edge,
   Node,
-  Position,
-  Panel,
+  NodeChange,
+  EdgeChange,
+  applyNodeChanges,
+  applyEdgeChanges,
+  Connection,
+  MarkerType,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { ITService, DataFeed, DataFlow } from '../types/types';
 import { ServiceNode } from './ServiceNode';
-import { Info } from 'lucide-react';
+import { DataFeedEdge } from './DataFeedEdge';
 
 interface FlowDiagramProps {
   services: ITService[];
@@ -18,10 +22,64 @@ interface FlowDiagramProps {
   flows: DataFlow[];
   selectedFeedId?: string;
   selectedFlowId?: string;
+  selectedServiceId?: string;
 }
 
 const nodeTypes = {
   service: ServiceNode,
+};
+
+const edgeTypes = {
+  default: DataFeedEdge,
+  smoothstep: DataFeedEdge,
+};
+
+const calculateHorizontalLayout = (services: ITService[], feeds: DataFeed[]) => {
+  const positions = new Map<string, { x: number; y: number }>();
+  const assigned = new Set<string>();
+
+  // Adjusted layout constants
+  const HORIZONTAL_GAP = 300;  // Gap between nodes horizontally
+  const VERTICAL_GAP = 100;    // Gap between nodes vertically
+
+  // Start with nodes that have no incoming connections
+  const startNodes = services
+    .filter(service => !feeds.some(feed => feed.receiverId === service.id))
+    .map(service => service.id);
+
+  let currentY = 0;
+
+  const positionNode = (nodeId: string, currentX: number) => {
+    if (assigned.has(nodeId)) return;
+
+    positions.set(nodeId, { x: currentX, y: currentY });
+    assigned.add(nodeId);
+
+    // Position all receivers of this node
+    const receivers = feeds
+      .filter(feed => feed.supplierId === nodeId)
+      .map(feed => feed.receiverId);
+
+    receivers.forEach((receiverId, index) => {
+      positionNode(receiverId, currentX + HORIZONTAL_GAP);
+      currentY += VERTICAL_GAP;
+    });
+  };
+
+  startNodes.forEach(nodeId => {
+    positionNode(nodeId, 0);
+    currentY += VERTICAL_GAP; // Move down for the next start node
+  });
+
+  return positions;
+};
+
+const getSmartEdgePoints = (
+  sourceNode: Node,
+  targetNode: Node
+): { sourceHandle: string; targetHandle: string } => {
+  // Always prefer right-to-left connections
+  return { sourceHandle: 'right', targetHandle: 'left' };
 };
 
 export const FlowDiagram: React.FC<FlowDiagramProps> = ({
@@ -30,130 +88,197 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
   flows,
   selectedFeedId,
   selectedFlowId,
+  selectedServiceId,
 }) => {
-  const { nodes, edges } = useMemo(() => {
-    let relevantFeeds: DataFeed[] = [];
-    
-    if (selectedFeedId) {
-      // For selected feed, show just that feed
-      relevantFeeds = feeds.filter(f => f.id === selectedFeedId);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+
+  useEffect(() => {
+    // Calculate positions using the horizontal layout
+    const nodePositions = calculateHorizontalLayout(services, feeds);
+
+    // Create nodes with calculated positions
+    const newNodes: Node[] = services.map(service => {
+      const position = nodePositions.get(service.id) || { x: 0, y: 0 };
+      return {
+        id: service.id,
+        type: 'service',
+        position,
+        data: { 
+          label: service.name,
+          id: service.id,
+          isHighlighted: false
+        },
+        draggable: true,
+      };
+    });
+
+    // Determine which feeds to show and highlight
+    let relevantFeeds = feeds;
+    const highlightedServices = new Set<string>();
+
+    if (selectedServiceId) {
+      highlightedServices.add(selectedServiceId);
+      relevantFeeds = feeds.filter(
+        feed => feed.supplierId === selectedServiceId || feed.receiverId === selectedServiceId
+      );
     } else if (selectedFlowId) {
-      // For selected flow, show all feeds in that flow
       const selectedFlow = flows.find(f => f.id === selectedFlowId);
       if (selectedFlow) {
-        relevantFeeds = selectedFlow.feeds
+        const processFeeds = selectedFlow.feeds
           .map(feedId => feeds.find(f => f.id === feedId))
           .filter((feed): feed is DataFeed => feed !== undefined);
+        
+        processFeeds.forEach(feed => {
+          highlightedServices.add(feed.supplierId);
+          highlightedServices.add(feed.receiverId);
+        });
+
+        relevantFeeds = processFeeds;
+      }
+    } else if (selectedFeedId) {
+      const selectedFeed = feeds.find(f => f.id === selectedFeedId);
+      if (selectedFeed) {
+        highlightedServices.add(selectedFeed.supplierId);
+        highlightedServices.add(selectedFeed.receiverId);
       }
     }
 
-    if (relevantFeeds.length === 0) {
-      return { nodes: [], edges: [] };
-    }
-
-    // Create a map of services to their positions
-    const servicePositions = new Map<string, { x: number; y: number }>();
-    const usedServiceIds = new Set<string>();
-
-    // Collect all unique services
-    relevantFeeds.forEach(feed => {
-      usedServiceIds.add(feed.supplierId);
-      usedServiceIds.add(feed.receiverId);
+    // Update node highlighting
+    newNodes.forEach(node => {
+      const isHighlighted = highlightedServices.size === 0 || highlightedServices.has(node.id);
+      node.data.isHighlighted = isHighlighted;
+      node.style = { opacity: isHighlighted ? 1 : 0.3 };
     });
 
-    // Calculate positions for each service
-    let currentX = 50;
-    const serviceArray = Array.from(usedServiceIds);
-    serviceArray.forEach((serviceId, index) => {
-      servicePositions.set(serviceId, {
-        x: currentX,
-        y: 100 + (index % 2) * 100, // Alternate between two rows
+    // Create edges with smart connection points
+    const newEdges: Edge[] = relevantFeeds.map(feed => {
+      return {
+        id: feed.id,
+        source: feed.supplierId,
+        target: feed.receiverId,
+        sourceHandle: 'right',
+        targetHandle: 'left',
+        data: {
+          label: feed.name,
+          id: feed.id,
+          description: feed.description,
+          type: feed.type,
+          frequency: feed.frequency,
+          format: feed.format,
+          isHighlighted: selectedFeedId === feed.id,
+        },
+        type: 'smoothstep',
+        animated: selectedFeedId === feed.id,
+        style: {
+          stroke: selectedFeedId === feed.id ? '#2563eb' : '#94a3b8',
+          strokeWidth: selectedFeedId === feed.id ? 3 : 2,
+          opacity: selectedFeedId ? (selectedFeedId === feed.id ? 1 : 0.3) : 1,
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: selectedFeedId === feed.id ? '#2563eb' : '#94a3b8',
+        },
+      };
+    });
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [services, feeds, flows, selectedFeedId, selectedFlowId, selectedServiceId]);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      setNodes((nds) => {
+        const newNodes = applyNodeChanges(changes, nds);
+        
+        // Update edge connections after node movement
+        setEdges((eds) => 
+          eds.map(edge => {
+            const sourceNode = newNodes.find(node => node.id === edge.source);
+            const targetNode = newNodes.find(node => node.id === edge.target);
+            
+            if (sourceNode && targetNode) {
+              const smartPoints = getSmartEdgePoints(sourceNode, targetNode);
+              return {
+                ...edge,
+                sourceHandle: smartPoints.sourceHandle,
+                targetHandle: smartPoints.targetHandle,
+              };
+            }
+            return edge;
+          })
+        );
+
+        return newNodes;
       });
-      currentX += 300; // Space between services
-    });
+    },
+    []
+  );
 
-    // Create nodes
-    const nodes: Node[] = serviceArray
-      .map(serviceId => {
-        const service = services.find(s => s.id === serviceId);
-        const position = servicePositions.get(serviceId);
-        if (!service || !position) return null;
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    []
+  );
 
-        return {
-          id: service.id,
-          type: 'service',
-          position,
-          data: { label: service.name },
-          sourcePosition: Position.Right,
-          targetPosition: Position.Left,
-        };
-      })
-      .filter((node): node is Node => node !== null);
-
-    // Create edges
-    const edges: Edge[] = relevantFeeds.map(feed => ({
-      id: feed.id,
-      source: feed.supplierId,
-      target: feed.receiverId,
-      label: feed.name,
-      animated: selectedFeedId === feed.id,
-      labelStyle: { 
-        fill: selectedFeedId === feed.id ? '#2563eb' : '#64748b',
-        fontWeight: selectedFeedId === feed.id ? '600' : '400',
-      },
-      style: {
-        stroke: selectedFeedId === feed.id ? '#2563eb' : '#64748b',
-        strokeWidth: selectedFeedId === feed.id ? 3 : 2,
-      },
-    }));
-
-    return { nodes, edges };
-  }, [services, feeds, flows, selectedFeedId, selectedFlowId]);
-
-  const noDataSelected = !selectedFeedId && !selectedFlowId;
-  const hasData = nodes.length > 0 && edges.length > 0;
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      setEdges((eds) => [
+        ...eds,
+        {
+          ...connection,
+          id: `${connection.source}-${connection.target}`,
+          type: 'default',
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+          },
+        } as Edge,
+      ]);
+    },
+    []
+  );
 
   return (
-    <div className="flex-1 h-full relative">
-      {hasData ? (
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          fitView
-          className="bg-gray-50"
-          minZoom={0.5}
-          maxZoom={1.5}
-          defaultEdgeOptions={{
-            type: 'smoothstep',
-            animated: false,
-          }}
-        >
-          <Background color="#94a3b8" gap={16} />
-          <Controls 
-            className="bg-white shadow-lg border border-gray-200 rounded-xl p-2"
-            showInteractive={false}
-          />
-        </ReactFlow>
-      ) : noDataSelected ? (
-        <div className="h-full flex items-center justify-center">
-          <div className="bg-white p-6 rounded-xl shadow-lg max-w-md">
-            <div className="flex items-center gap-3 text-gray-600">
-              <Info className="w-5 h-5" />
-              <p>Select a data feed or process from the sidebar to visualize the flow.</p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="h-full flex items-center justify-center">
-          <div className="bg-white p-6 rounded-xl shadow-lg max-w-md">
-            <div className="flex items-center gap-3 text-gray-600">
-              <Info className="w-5 h-5" />
-              <p>No data available for the selected feed or process.</p>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="w-full h-full relative overflow-auto">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={handleNodesChange}
+        onEdgesChange={handleEdgesChange}
+        onConnect={handleConnect}
+        fitView
+        fitViewOptions={{ 
+          padding: 0.5,
+          includeHiddenNodes: true,
+          minZoom: 0.2,
+          maxZoom: 1.5,
+        }}
+        defaultViewport={{ 
+          x: 0, 
+          y: 0, 
+          zoom: 0.7
+        }}
+        minZoom={0.2}
+        maxZoom={1.5}
+        attributionPosition="bottom-right"
+        nodesConnectable={false}
+        nodesDraggable={true}
+        elementsSelectable={true}
+        connectOnClick={false}
+        panOnDrag={[1, 2]}
+        panOnScroll={true}
+        zoomOnScroll={true}
+        zoomOnPinch={true}
+        zoomOnDoubleClick={false}
+        selectNodesOnDrag={false}
+      >
+        <Controls 
+          showInteractive={false}
+          position="bottom-right"
+        />
+        <Background />
+      </ReactFlow>
     </div>
   );
 };
