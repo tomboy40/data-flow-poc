@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { EdgeProps, getBezierPath } from 'reactflow';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from './ui/dialog';
 import { Network } from 'lucide-react';
+import {
+  TooltipProvider,
+  TooltipRoot,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipPortal,
+} from './ui/tooltip';
 
 interface DataFeedEdgeData {
   label: string;
@@ -32,7 +32,6 @@ const DataFeedEdge: React.FC<EdgeProps<DataFeedEdgeData>> = ({
   data,
   labelStyle,
 }) => {
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -42,89 +41,61 @@ const DataFeedEdge: React.FC<EdgeProps<DataFeedEdgeData>> = ({
     targetPosition,
   });
 
-  const handleEdgeClick = (evt: React.MouseEvent<SVGGElement, MouseEvent>) => {
-    evt.stopPropagation();
-    setIsDialogOpen(true);
-  };
-
   return (
-    <>
-      <g 
-        onClick={handleEdgeClick}
-        className="cursor-pointer"
-        style={{ pointerEvents: 'all' }}
-      >
-        <path
-          id={id}
-          style={{ ...style, pointerEvents: 'all' }}
-          className="react-flow__edge-path hover:stroke-blue-400"
-          d={edgePath}
-          markerEnd={markerEnd}
-        />
-        <path
-          d={edgePath}
-          fill="none"
-          strokeWidth={20}
-          stroke="transparent"
-          strokeOpacity={0}
-          style={{ pointerEvents: 'stroke' }}
-        />
-        <text
-          style={labelStyle}
-          className="react-flow__edge-text select-none"
-          x={labelX}
-          y={labelY}
-          textAnchor="middle"
-          dominantBaseline="middle"
-        >
-          {data?.label}
-        </text>
-      </g>
-
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[425px] bg-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Network className="w-5 h-5 text-blue-600" />
+    <TooltipProvider>
+      <TooltipRoot>
+        <TooltipTrigger asChild>
+          <g className="cursor-pointer" style={{ pointerEvents: 'all' }}>
+            <path
+              id={id}
+              style={{ ...style, pointerEvents: 'all' }}
+              className="react-flow__edge-path hover:stroke-blue-400"
+              d={edgePath}
+              markerEnd={markerEnd}
+            />
+            <path
+              d={edgePath}
+              fill="none"
+              strokeWidth={20}
+              stroke="transparent"
+              strokeOpacity={0}
+              style={{ pointerEvents: 'stroke' }}
+            />
+            <text
+              style={labelStyle}
+              className="react-flow__edge-text select-none"
+              x={labelX}
+              y={labelY}
+              textAnchor="middle"
+              dominantBaseline="middle"
+            >
               {data?.label}
-            </DialogTitle>
-            <DialogDescription>
-              Data Feed Details
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <span className="text-sm font-medium">ID:</span>
-              <span className="text-sm text-gray-600 col-span-3">{data?.id}</span>
+            </text>
+          </g>
+        </TooltipTrigger>
+        <TooltipPortal>
+          <TooltipContent className="max-w-xs">
+            <div className="space-y-2">
+              <div className="font-semibold flex items-center gap-2">
+                <Network className="w-4 h-4 text-blue-600" />
+                {data?.label}
+              </div>
+              <div className="text-xs space-y-1">
+                <div><span className="font-medium">ID:</span> {data?.id}</div>
+                {data?.type && <div><span className="font-medium">Type:</span> {data.type}</div>}
+                {data?.frequency && (
+                  <div><span className="font-medium">Frequency:</span> {data.frequency}</div>
+                )}
+                {data?.format && <div><span className="font-medium">Format:</span> {data.format}</div>}
+                {data?.description && (
+                  <div><span className="font-medium">Description:</span> {data.description}</div>
+                )}
+              </div>
             </div>
-            {data?.type && (
-              <div className="grid grid-cols-4 items-center gap-4">
-                <span className="text-sm font-medium">Type:</span>
-                <span className="text-sm text-gray-600 col-span-3">{data.type}</span>
-              </div>
-            )}
-            {data?.frequency && (
-              <div className="grid grid-cols-4 items-center gap-4">
-                <span className="text-sm font-medium">Frequency:</span>
-                <span className="text-sm text-gray-600 col-span-3">{data.frequency}</span>
-              </div>
-            )}
-            {data?.format && (
-              <div className="grid grid-cols-4 items-center gap-4">
-                <span className="text-sm font-medium">Format:</span>
-                <span className="text-sm text-gray-600 col-span-3">{data.format}</span>
-              </div>
-            )}
-            {data?.description && (
-              <div className="grid grid-cols-4 items-center gap-4">
-                <span className="text-sm font-medium">Description:</span>
-                <span className="text-sm text-gray-600 col-span-3">{data.description}</span>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+          </TooltipContent>
+        </TooltipPortal>
+      </TooltipRoot>
+    </TooltipProvider>
   );
 };
 

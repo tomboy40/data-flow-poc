@@ -13,7 +13,7 @@ function App() {
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
       <header className="bg-white shadow-sm border-b border-gray-200 h-16">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="px-4 py-4">
           <div className="flex items-center">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-50 rounded-lg">

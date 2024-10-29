@@ -94,8 +94,13 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
   const [edges, setEdges] = useState<Edge[]>([]);
 
   useEffect(() => {
+    // Add console logs to verify data
+    console.log('Services:', services);
+    console.log('Feeds:', feeds);
+    
     // Calculate positions using the horizontal layout
     const nodePositions = calculateHorizontalLayout(services, feeds);
+    console.log('Node Positions:', nodePositions);
 
     // Create nodes with calculated positions
     const newNodes: Node[] = services.map(service => {
@@ -112,29 +117,29 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
         draggable: true,
       };
     });
+    console.log('Created Nodes:', newNodes);
 
-    // Determine which feeds to show and highlight
-    let relevantFeeds = feeds;
+    // Determine which services to highlight
     const highlightedServices = new Set<string>();
 
     if (selectedServiceId) {
       highlightedServices.add(selectedServiceId);
-      relevantFeeds = feeds.filter(
+      feeds.filter(
         feed => feed.supplierId === selectedServiceId || feed.receiverId === selectedServiceId
-      );
+      ).forEach(feed => {
+        highlightedServices.add(feed.supplierId);
+        highlightedServices.add(feed.receiverId);
+      });
     } else if (selectedFlowId) {
       const selectedFlow = flows.find(f => f.id === selectedFlowId);
       if (selectedFlow) {
-        const processFeeds = selectedFlow.feeds
-          .map(feedId => feeds.find(f => f.id === feedId))
-          .filter((feed): feed is DataFeed => feed !== undefined);
-        
-        processFeeds.forEach(feed => {
-          highlightedServices.add(feed.supplierId);
-          highlightedServices.add(feed.receiverId);
+        selectedFlow.feeds.forEach(feedId => {
+          const feed = feeds.find(f => f.id === feedId);
+          if (feed) {
+            highlightedServices.add(feed.supplierId);
+            highlightedServices.add(feed.receiverId);
+          }
         });
-
-        relevantFeeds = processFeeds;
       }
     } else if (selectedFeedId) {
       const selectedFeed = feeds.find(f => f.id === selectedFeedId);
@@ -151,8 +156,13 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
       node.style = { opacity: isHighlighted ? 1 : 0.3 };
     });
 
-    // Create edges with smart connection points
-    const newEdges: Edge[] = relevantFeeds.map(feed => {
+    // Create edges - now using all feeds instead of filtered ones
+    const newEdges: Edge[] = feeds.map(feed => {
+      const isHighlighted = selectedFeedId === feed.id || 
+        (highlightedServices.size > 0 && 
+          highlightedServices.has(feed.supplierId) && 
+          highlightedServices.has(feed.receiverId));
+
       return {
         id: feed.id,
         source: feed.supplierId,
@@ -163,24 +173,22 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
           label: feed.name,
           id: feed.id,
           description: feed.description,
-          type: feed.type,
-          frequency: feed.frequency,
-          format: feed.format,
-          isHighlighted: selectedFeedId === feed.id,
+          isHighlighted,
         },
         type: 'smoothstep',
-        animated: selectedFeedId === feed.id,
+        animated: isHighlighted,
         style: {
-          stroke: selectedFeedId === feed.id ? '#2563eb' : '#94a3b8',
-          strokeWidth: selectedFeedId === feed.id ? 3 : 2,
-          opacity: selectedFeedId ? (selectedFeedId === feed.id ? 1 : 0.3) : 1,
+          stroke: isHighlighted ? '#2563eb' : '#94a3b8',
+          strokeWidth: isHighlighted ? 3 : 2,
+          opacity: highlightedServices.size === 0 ? 1 : (isHighlighted ? 1 : 0.3),
         },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: selectedFeedId === feed.id ? '#2563eb' : '#94a3b8',
+          color: isHighlighted ? '#2563eb' : '#94a3b8',
         },
       };
     });
+    console.log('Created Edges:', newEdges);
 
     setNodes(newNodes);
     setEdges(newEdges);
@@ -237,8 +245,109 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
     []
   );
 
+  const handleNodeClick = (event: React.MouseEvent, node: Node) => {
+    // Find all flows that contain feeds connected to this service
+    const relatedFeeds = feeds.filter(
+      feed => feed.supplierId === node.id || feed.receiverId === node.id
+    );
+    const relatedFeedIds = new Set(relatedFeeds.map(feed => feed.id));
+    
+    // Find and highlight flows that contain any of these feeds
+    const highlightedServices = new Set<string>();
+    const relevantFlows = flows.filter(flow => 
+      flow.feeds.some(feedId => relatedFeedIds.has(feedId))
+    );
+
+    // Collect all services involved in these flows
+    relevantFlows.forEach(flow => {
+      flow.feeds.forEach(feedId => {
+        const feed = feeds.find(f => f.id === feedId);
+        if (feed) {
+          highlightedServices.add(feed.supplierId);
+          highlightedServices.add(feed.receiverId);
+        }
+      });
+    });
+
+    // Update nodes highlighting
+    setNodes(nodes => 
+      nodes.map(n => ({
+        ...n,
+        data: {
+          ...n.data,
+          isHighlighted: highlightedServices.size === 0 || highlightedServices.has(n.id)
+        },
+        style: {
+          ...n.style,
+          opacity: highlightedServices.size === 0 || highlightedServices.has(n.id) ? 1 : 0.3
+        }
+      }))
+    );
+
+    // Update edges highlighting
+    setEdges(edges => 
+      edges.map(edge => ({
+        ...edge,
+        style: {
+          ...edge.style,
+          opacity: relatedFeedIds.has(edge.id) ? 1 : 0.3,
+          stroke: relatedFeedIds.has(edge.id) ? '#2563eb' : '#94a3b8'
+        },
+        animated: relatedFeedIds.has(edge.id)
+      }))
+    );
+  };
+
+  const handleEdgeClick = (event: React.MouseEvent, edge: Edge) => {
+    // Find flows that contain this feed
+    const relevantFlows = flows.filter(flow => flow.feeds.includes(edge.id));
+    
+    // Collect all feeds involved in these flows
+    const highlightedFeedIds = new Set<string>();
+    const highlightedServices = new Set<string>();
+    
+    relevantFlows.forEach(flow => {
+      flow.feeds.forEach(feedId => {
+        highlightedFeedIds.add(feedId);
+        const feed = feeds.find(f => f.id === feedId);
+        if (feed) {
+          highlightedServices.add(feed.supplierId);
+          highlightedServices.add(feed.receiverId);
+        }
+      });
+    });
+
+    // Update nodes highlighting
+    setNodes(nodes => 
+      nodes.map(n => ({
+        ...n,
+        data: {
+          ...n.data,
+          isHighlighted: highlightedServices.has(n.id)
+        },
+        style: {
+          ...n.style,
+          opacity: highlightedServices.has(n.id) ? 1 : 0.3
+        }
+      }))
+    );
+
+    // Update edges highlighting
+    setEdges(edges => 
+      edges.map(e => ({
+        ...e,
+        style: {
+          ...e.style,
+          opacity: highlightedServices.size === 0 || highlightedFeedIds.has(e.id) ? 1 : 0.3,
+          stroke: highlightedFeedIds.has(e.id) ? '#2563eb' : '#94a3b8'
+        },
+        animated: highlightedFeedIds.has(e.id)
+      }))
+    );
+  };
+
   return (
-    <div className="w-full h-full relative overflow-auto">
+    <div className="w-full h-full relative overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -247,6 +356,8 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={handleEdgeClick}
         fitView
         fitViewOptions={{ 
           padding: 0.5,
@@ -254,13 +365,7 @@ export const FlowDiagram: React.FC<FlowDiagramProps> = ({
           minZoom: 0.2,
           maxZoom: 1.5,
         }}
-        defaultViewport={{ 
-          x: 0, 
-          y: 0, 
-          zoom: 0.7
-        }}
-        minZoom={0.2}
-        maxZoom={1.5}
+        style={{ width: '100%', height: '100%' }}
         attributionPosition="bottom-right"
         nodesConnectable={false}
         nodesDraggable={true}
